@@ -15,11 +15,8 @@ import com.example.brightnesscontrol.MainActivity
 import com.example.brightnesscontrol.R
 import com.example.brightnesscontrol.data.AppPreferences
 
-/** Foreground service keeps the notification/actions alive; the actual overlay belongs to the accessibility service. */
+/** Foreground service keeps the dimming controls in the notification. */
 class BrightnessService : Service() {
-    private var restoreOnStop = false
-    private var basePercent: Int? = null
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -29,72 +26,61 @@ class BrightnessService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                restoreOnStop = intent.getBooleanExtra(EXTRA_RESTORE, false)
+                BrightnessAccessibilityService.clearOverlay()
                 stopSelf()
             }
-            ACTION_ADJUST -> adjustFromNotification(intent.getIntExtra(EXTRA_DELTA, 0))
+            ACTION_ADJUST -> adjustDimFromNotification(intent.getIntExtra(EXTRA_DELTA, 0))
             ACTION_APPLY, null -> {
                 val preferences = AppPreferences(this).current()
-                val correction = intent?.getIntExtra(EXTRA_CORRECTION, preferences.correction)
-                    ?: preferences.correction
-                basePercent = intent?.getIntExtra(
-                    EXTRA_BASE,
-                    preferences.basePercent
-                ) ?: preferences.basePercent
-                applyCorrection(correction, basePercent ?: preferences.basePercent)
-                updateForegroundNotification(correction)
+                val brightnessPercent = intent?.getIntExtra(
+                    EXTRA_BRIGHTNESS,
+                    preferences.brightnessLevel.coerceAtLeast(0)
+                ) ?: preferences.brightnessLevel.coerceAtLeast(0)
+                val dimPercent = intent?.getIntExtra(
+                    EXTRA_DIM,
+                    effectiveDimPercent(preferences.brightnessLevel, preferences.dimPercent)
+                ) ?: effectiveDimPercent(preferences.brightnessLevel, preferences.dimPercent)
+                applySettings(brightnessPercent, dimPercent)
+                updateForegroundNotification(dimPercent)
             }
         }
         return START_STICKY
     }
 
-    private fun adjustFromNotification(delta: Int) {
-        val preferences = AppPreferences(this).current()
-        val correction = (preferences.correction + delta).coerceIn(-100, 0)
-        basePercent = preferences.basePercent
-        AppPreferences(this).setCorrection(correction)
-
-        if (correction == 0) {
-            BrightnessController.writeSystemBrightness(this, preferences.basePercent)
-            BrightnessAccessibilityService.clearOverlay()
+    private fun adjustDimFromNotification(delta: Int) {
+        val preferences = AppPreferences(this)
+        var preferencesState = preferences.current()
+        val dimPercent = (preferencesState.dimPercent + delta).coerceIn(0, 100)
+        preferences.setDimPercent(dimPercent)
+        preferencesState = preferences.current()
+        val effectiveDim = effectiveDimPercent(preferencesState.brightnessLevel, dimPercent)
+        applySettings(preferencesState.brightnessLevel.coerceAtLeast(0), effectiveDim)
+        if (dimPercent == 0 && preferencesState.brightnessLevel >= 0) {
             stopSelf()
-            return
-        }
-
-        applyCorrection(correction, preferences.basePercent)
-        updateForegroundNotification(correction)
-    }
-
-    private fun applyCorrection(correction: Int, base: Int) {
-        when {
-            correction > 0 -> {
-                BrightnessController.writeSystemBrightness(
-                    this,
-                    BrightnessController.systemPercentForCorrection(base, correction)
-                )
-                BrightnessAccessibilityService.clearOverlay()
-            }
-            correction == 0 -> {
-                BrightnessController.writeSystemBrightness(this, base)
-                BrightnessAccessibilityService.clearOverlay()
-            }
-            else -> {
-                // Keep the hardware level at the saved base and dim perceived brightness via accessibility overlay.
-                BrightnessController.writeSystemBrightness(this, base)
-                BrightnessAccessibilityService.applyOverlay(
-                    BrightnessController.overlayAlphaForCorrection(correction)
-                )
-            }
+        } else {
+            updateForegroundNotification(effectiveDim)
         }
     }
 
-    private fun updateForegroundNotification(correction: Int) {
-        startForeground(NOTIFICATION_ID, buildNotification(correction))
+    private fun effectiveDimPercent(brightnessLevel: Int, additionalDimPercent: Int): Int = when {
+        brightnessLevel < 0 -> maxOf(-brightnessLevel, additionalDimPercent)
+        brightnessLevel == 0 -> 0
+        else -> additionalDimPercent
+    }
+
+    private fun applySettings(brightnessPercent: Int, dimPercent: Int) {
+        BrightnessController.writeSystemBrightness(this, brightnessPercent.coerceIn(0, 100))
+        if (dimPercent > 0 && BrightnessAccessibilityService.isEnabled(this)) {
+            BrightnessAccessibilityService.applyOverlay(
+                BrightnessController.overlayAlphaForDimPercent(dimPercent)
+            )
+        } else {
+            BrightnessAccessibilityService.clearOverlay()
+        }
     }
 
     override fun onDestroy() {
         BrightnessAccessibilityService.clearOverlay()
-        if (restoreOnStop) basePercent?.let { BrightnessController.writeSystemBrightness(this, it) }
         super.onDestroy()
     }
 
@@ -111,20 +97,20 @@ class BrightnessService : Service() {
         }
     }
 
-    private fun buildNotification(correction: Int): Notification {
+    private fun buildNotification(dimPercent: Int): Notification {
         val launchIntent = PendingIntent.getActivity(
             this,
             0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val dimPercent = (-correction).coerceIn(0, 100)
+        val dim = dimPercent.coerceIn(0, 100)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.notification_dim_level, dimPercent))
+            .setContentText(getString(R.string.notification_dim_level, dim))
             .setContentIntent(launchIntent)
-            .setProgress(100, dimPercent, false)
+            .setProgress(100, dim, false)
             .addAction(
                 R.drawable.ic_remove,
                 getString(R.string.notification_decrease),
@@ -140,6 +126,10 @@ class BrightnessService : Service() {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun updateForegroundNotification(dimPercent: Int) {
+        startForeground(NOTIFICATION_ID, buildNotification(dimPercent))
     }
 
     private fun adjustPendingIntent(delta: Int): PendingIntent {
@@ -162,29 +152,25 @@ class BrightnessService : Service() {
         private const val ACTION_APPLY = "com.example.brightnesscontrol.APPLY"
         private const val ACTION_STOP = "com.example.brightnesscontrol.STOP"
         private const val ACTION_ADJUST = "com.example.brightnesscontrol.ADJUST"
-        private const val EXTRA_CORRECTION = "correction"
-        private const val EXTRA_BASE = "base_brightness"
-        private const val EXTRA_RESTORE = "restore"
+        private const val EXTRA_BRIGHTNESS = "brightness_percent"
+        private const val EXTRA_DIM = "dim_percent"
         private const val EXTRA_DELTA = "delta"
         private const val REQUEST_DECREASE = 4102
         private const val REQUEST_INCREASE = 4103
 
-        fun apply(context: Context, correction: Int, basePercent: Int) {
-            if (correction >= 0 || !BrightnessAccessibilityService.isEnabled(context)) return
+        fun apply(context: Context, brightnessPercent: Int, dimPercent: Int) {
             val intent = Intent(context, BrightnessService::class.java).apply {
                 action = ACTION_APPLY
-                putExtra(EXTRA_CORRECTION, correction)
-                putExtra(EXTRA_BASE, basePercent)
+                putExtra(EXTRA_BRIGHTNESS, brightnessPercent.coerceIn(0, 100))
+                putExtra(EXTRA_DIM, dimPercent.coerceIn(0, 100))
             }
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun stop(context: Context, restore: Boolean) {
+        fun stop(context: Context) {
             val intent = Intent(context, BrightnessService::class.java).apply {
                 action = ACTION_STOP
-                putExtra(EXTRA_RESTORE, restore)
             }
-            // startService delivers ACTION_STOP even when the service is already running.
             runCatching { context.startService(intent) }
         }
     }

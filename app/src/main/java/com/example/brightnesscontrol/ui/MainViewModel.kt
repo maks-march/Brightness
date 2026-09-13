@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.max
 
 sealed interface ApplyResult {
     data object Done : ApplyResult
@@ -39,52 +41,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
     init {
-        preferences.ensureBaseBrightness(BrightnessController.readSystemBrightness(appContext))
+        preferences.ensureBrightnessLevel()
     }
 
-    fun setCorrection(value: Int) = preferences.setCorrection(value)
+    fun setBrightnessLevel(value: Int) = preferences.setBrightnessLevel(value)
 
-    fun resetToSystem() {
-        // The base is captured before an extended correction is applied, so reset never
-        // mistakes an already boosted value for the user's ordinary system level.
-        val base = preferences.current().basePercent
-        BrightnessService.stop(appContext, restore = true)
-        preferences.rebasePercent(base)
-        BrightnessController.writeSystemBrightness(appContext, base)
+    fun resetToZero() {
+        preferences.setBrightnessLevel(0)
+        preferences.setDimPercent(0)
+        BrightnessAccessibilityService.clearOverlay()
+        BrightnessService.stop(appContext)
+        BrightnessController.writeSystemBrightness(appContext, 0)
     }
 
-    fun applyCorrection(): ApplyResult {
+    fun applyBrightness(): ApplyResult {
         val current = preferences.current()
-        if (current.correction < 0 && !BrightnessAccessibilityService.isEnabled(appContext)) {
+        val dimPercent = effectiveDimPercent(current)
+        if (dimPercent > 0 && !BrightnessAccessibilityService.isEnabled(appContext)) {
             return ApplyResult.NeedsAccessibilityPermission
         }
-        if (current.correction != 0 && !BrightnessController.canWriteSettings(appContext)) {
+        if (!BrightnessController.canWriteSettings(appContext)) {
             return ApplyResult.NeedsWriteSettingsPermission
         }
 
-        when {
-            current.correction < 0 -> BrightnessService.apply(
-                appContext,
-                current.correction,
-                current.basePercent
-            )
-            current.correction > 0 -> {
-                BrightnessController.writeSystemBrightness(
-                    appContext,
-                    BrightnessController.systemPercentForCorrection(
-                        current.basePercent,
-                        current.correction
-                    )
-                )
-                // A previous negative correction may still have a running overlay service.
-                BrightnessService.stop(appContext, restore = false)
-            }
-            else -> {
-                BrightnessService.stop(appContext, restore = true)
-                BrightnessController.writeSystemBrightness(appContext, current.basePercent)
-            }
-        }
+        val systemPercent = current.brightnessLevel.coerceAtLeast(0)
+        BrightnessController.writeSystemBrightness(appContext, systemPercent)
+        BrightnessService.apply(appContext, systemPercent, dimPercent)
         return ApplyResult.Done
+    }
+
+    private fun effectiveDimPercent(state: PreferencesState): Int = when {
+        state.brightnessLevel < 0 -> max(abs(state.brightnessLevel), state.dimPercent)
+        state.brightnessLevel == 0 -> 0
+        else -> state.dimPercent
     }
 
     fun setAutostart(enabled: Boolean) = preferences.setAutostart(enabled)
@@ -107,6 +96,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 InstallResult.FAILED -> _updateState.value = UpdateState.Error("Download or installation failed")
             }
         }
+    }
+
+    fun openRestrictedSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:${appContext.packageName}")
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        appContext.startActivity(intent)
     }
 
     fun openAccessibilitySettings() {

@@ -3,8 +3,9 @@ package com.example.brightnesscontrol.brightness
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.ContextCompat
 import com.example.brightnesscontrol.data.AppPreferences
+import kotlin.math.abs
+import kotlin.math.max
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -13,24 +14,15 @@ class BootReceiver : BroadcastReceiver() {
         ) return
 
         val preferences = AppPreferences(context).current()
-        if (!preferences.autostart || preferences.correction == 0) return
+        if (!preferences.autostart || !BrightnessController.canWriteSettings(context)) return
 
-        if (preferences.correction < 0) {
-            if (!BrightnessAccessibilityService.isEnabled(context)) return
-            val serviceIntent = Intent(context, BrightnessService::class.java).apply {
-                action = "com.example.brightnesscontrol.APPLY"
-                putExtra("correction", preferences.correction)
-                putExtra("base_brightness", preferences.basePercent)
-            }
-            ContextCompat.startForegroundService(context, serviceIntent)
-        } else if (BrightnessController.canWriteSettings(context)) {
-            BrightnessController.writeSystemBrightness(
-                context,
-                BrightnessController.systemPercentForCorrection(
-                    preferences.basePercent,
-                    preferences.correction
-                )
-            )
+        val systemPercent = preferences.brightnessLevel.coerceAtLeast(0)
+        val dimPercent = when {
+            preferences.brightnessLevel < 0 ->
+                max(abs(preferences.brightnessLevel), preferences.dimPercent)
+            preferences.brightnessLevel == 0 -> 0
+            else -> preferences.dimPercent
         }
+        BrightnessService.apply(context, systemPercent, dimPercent)
     }
 }

@@ -72,6 +72,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -92,19 +93,49 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
     private var permissionFlowActive = false
+    private var restrictedSettingsStage = false
+    private var accessibilitySettingsStage = false
+    private var writeSettingsStage = false
 
     override fun onResume() {
         super.onResume()
-        if (!permissionFlowActive) return
 
-        val accessibilityGranted = BrightnessAccessibilityService.isEnabled(this)
-        val writeGranted = BrightnessController.canWriteSettings(this)
-        when {
-            !accessibilityGranted -> Unit
-            !writeGranted -> viewModel.openWriteSettings()
-            else -> {
+        if (restrictedSettingsStage) {
+            restrictedSettingsStage = false
+            accessibilitySettingsStage = true
+            viewModel.openAccessibilitySettings()
+            return
+        }
+
+        if (accessibilitySettingsStage) {
+            accessibilitySettingsStage = false
+            if (!permissionFlowActive) return
+
+            val accessibilityGranted = BrightnessAccessibilityService.isEnabled(this)
+            if (!accessibilityGranted) {
                 permissionFlowActive = false
-                handleApplyResult(viewModel.applyCorrection(), this, viewModel)
+                return
+            }
+            if (!BrightnessController.canWriteSettings(this)) {
+                writeSettingsStage = true
+                viewModel.openWriteSettings()
+                return
+            }
+            permissionFlowActive = false
+            handleApplyResult(viewModel.applyBrightness(), this, viewModel)
+            return
+        }
+
+        if (writeSettingsStage) {
+            writeSettingsStage = false
+            if (permissionFlowActive &&
+                BrightnessAccessibilityService.isEnabled(this) &&
+                BrightnessController.canWriteSettings(this)
+            ) {
+                permissionFlowActive = false
+                handleApplyResult(viewModel.applyBrightness(), this, viewModel)
+            } else {
+                permissionFlowActive = false
             }
         }
     }
@@ -186,13 +217,13 @@ class MainActivity : ComponentActivity() {
                             BrightnessScreen(
                                 modifier = Modifier.padding(padding),
                                 state = state,
-                                onCorrectionChange = viewModel::setCorrection,
+                                onBrightnessChange = viewModel::setBrightnessLevel,
                                 onApply = {
-                                    handleApplyResult(viewModel.applyCorrection(), context, viewModel)
+                                    handleApplyResult(viewModel.applyBrightness(), context, viewModel)
                                 },
                                 onReset = {
-                                    viewModel.resetToSystem()
-                                    handleApplyResult(viewModel.applyCorrection(), context, viewModel)
+                                    viewModel.resetToZero()
+                                    handleApplyResult(viewModel.applyBrightness(), context, viewModel)
                                 },
                                 onAutostartChange = viewModel::setAutostart
                             )
@@ -203,7 +234,7 @@ class MainActivity : ComponentActivity() {
                                 updateState = updateState,
                                 appVersion = viewModel.appVersion(),
                                 onThemeChange = viewModel::setTheme,
-                                onOverlayPermission = viewModel::openAccessibilitySettings,
+                                onOverlayPermission = { startAccessibilityPermissionFlow(false) },
                                 onWritePermission = viewModel::openWriteSettings,
                                 onNotificationPermission = {
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -227,6 +258,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun startAccessibilityPermissionFlow(applyAfter: Boolean) {
+        permissionFlowActive = applyAfter
+        restrictedSettingsStage = true
+        accessibilitySettingsStage = false
+        writeSettingsStage = false
+        viewModel.openRestrictedSettings()
+    }
+
     private fun handleApplyResult(
         result: com.example.brightnesscontrol.ui.ApplyResult,
         context: Context,
@@ -236,11 +275,11 @@ class MainActivity : ComponentActivity() {
             com.example.brightnesscontrol.ui.ApplyResult.Done ->
                 Toast.makeText(context, R.string.applied, Toast.LENGTH_SHORT).show()
             com.example.brightnesscontrol.ui.ApplyResult.NeedsAccessibilityPermission -> {
-                permissionFlowActive = true
-                vm.openAccessibilitySettings()
+                startAccessibilityPermissionFlow(applyAfter = true)
             }
             com.example.brightnesscontrol.ui.ApplyResult.NeedsWriteSettingsPermission -> {
                 permissionFlowActive = true
+                writeSettingsStage = true
                 vm.openWriteSettings()
             }
         }
@@ -251,7 +290,7 @@ class MainActivity : ComponentActivity() {
 private fun BrightnessScreen(
     modifier: Modifier,
     state: PreferencesState,
-    onCorrectionChange: (Int) -> Unit,
+    onBrightnessChange: (Int) -> Unit,
     onApply: () -> Unit,
     onReset: () -> Unit,
     onAutostartChange: (Boolean) -> Unit
@@ -285,22 +324,22 @@ private fun BrightnessScreen(
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            stringResource(R.string.correction_label),
+                            stringResource(R.string.brightness_level),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     Text(
-                        correctionText(state.correction),
+                        "${state.brightnessLevel}%",
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold
                     )
                 }
                 Spacer(Modifier.height(12.dp))
                 Slider(
-                    value = state.correction.toFloat(),
-                    onValueChange = { onCorrectionChange(it.roundToInt()) },
+                    value = state.brightnessLevel.toFloat(),
+                    onValueChange = { onBrightnessChange(it.roundToInt()) },
                     valueRange = -100f..100f,
                     steps = 199
                 )
@@ -550,6 +589,8 @@ private fun AccessRow(
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(8.dp))
@@ -568,7 +609,11 @@ private fun AccessRow(
             description,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 40.dp)
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 40.dp)
         )
     }
 }
@@ -599,12 +644,6 @@ private fun GlassCard(content: @Composable androidx.compose.foundation.layout.Co
             content = content
         )
     }
-}
-
-private fun correctionText(value: Int): String = when {
-    value < 0 -> value.toString()
-    value > 0 -> "+$value"
-    else -> "0"
 }
 
 private fun shareGithub(context: Context) {

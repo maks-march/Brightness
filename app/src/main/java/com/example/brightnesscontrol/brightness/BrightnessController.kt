@@ -30,21 +30,11 @@ object BrightnessController {
         }.getOrDefault(false)
     }
 
-    /** Positive correction moves from the hidden base percentage toward 100. */
-    fun systemPercentForCorrection(basePercent: Int, correction: Int): Int {
-        if (correction <= 0) return basePercent.coerceIn(0, 100)
-        val base = basePercent.coerceIn(0, 100)
-        return (base + (100 - base) * (correction / 100f)).roundToInt().coerceIn(0, 100)
-    }
-
     /** A black overlay is intentionally capped below opaque black so the UI remains recoverable. */
-    fun overlayAlphaForCorrection(correction: Int): Float {
-        return (correction.coerceIn(-100, 0).absoluteValue / 100f * 0.92f)
+    fun overlayAlphaForDimPercent(dimPercent: Int): Float {
+        return dimPercent.coerceIn(0, 100) / 100f * 0.92f
     }
 
     private fun rawToPercent(raw: Int): Int =
         (raw.coerceIn(0, 255) / 255f * 100f).roundToInt().coerceIn(0, 100)
-
-    private val Int.absoluteValue: Int
-        get() = if (this < 0) -this else this
 }
