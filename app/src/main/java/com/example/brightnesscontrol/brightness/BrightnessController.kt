@@ -9,31 +9,32 @@ object BrightnessController {
     fun canWriteSettings(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.System.canWrite(context)
 
-    fun canDrawOverlay(context: Context): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
-
+    /** Returns brightness as a user-facing percentage from 0 to 100. */
     fun readSystemBrightness(context: Context): Int {
-        return runCatching {
+        val raw = runCatching {
             Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-        }.getOrDefault(128).coerceIn(0, 255)
+        }.getOrDefault(128)
+        return rawToPercent(raw)
     }
 
-    fun writeSystemBrightness(context: Context, value: Int): Boolean {
+    /** Accepts only a 0..100 percentage and converts it to Android's 0..255 storage range. */
+    fun writeSystemBrightness(context: Context, percent: Int): Boolean {
         if (!canWriteSettings(context)) return false
+        val raw = (percent.coerceIn(0, 100) / 100f * 255f).roundToInt()
         return runCatching {
             Settings.System.putInt(
                 context.contentResolver,
                 Settings.System.SCREEN_BRIGHTNESS,
-                value.coerceIn(0, 255)
+                raw.coerceIn(0, 255)
             )
         }.getOrDefault(false)
     }
 
-    /** Positive correction moves from the saved base toward 255. */
-    fun systemValueForCorrection(base: Int, correction: Int): Int {
-        if (correction <= 0) return base.coerceIn(0, 255)
-        val room = 255 - base.coerceIn(0, 255)
-        return (base + room * (correction / 100f)).roundToInt().coerceIn(0, 255)
+    /** Positive correction moves from the hidden base percentage toward 100. */
+    fun systemPercentForCorrection(basePercent: Int, correction: Int): Int {
+        if (correction <= 0) return basePercent.coerceIn(0, 100)
+        val base = basePercent.coerceIn(0, 100)
+        return (base + (100 - base) * (correction / 100f)).roundToInt().coerceIn(0, 100)
     }
 
     /** A black overlay is intentionally capped below opaque black so the UI remains recoverable. */
@@ -41,14 +42,8 @@ object BrightnessController {
         return (correction.coerceIn(-100, 0).absoluteValue / 100f * 0.92f)
     }
 
-    fun estimatedPerceivedPercent(base: Int, correction: Int): Int {
-        val basePercent = (base / 255f * 100f)
-        return if (correction < 0) {
-            (basePercent * (1f - overlayAlphaForCorrection(correction))).roundToInt()
-        } else {
-            (systemValueForCorrection(base, correction) / 255f * 100f).roundToInt()
-        }
-    }
+    private fun rawToPercent(raw: Int): Int =
+        (raw.coerceIn(0, 255) / 255f * 100f).roundToInt().coerceIn(0, 100)
 
     private val Int.absoluteValue: Int
         get() = if (this < 0) -this else this

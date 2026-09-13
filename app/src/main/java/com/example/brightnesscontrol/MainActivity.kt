@@ -9,8 +9,8 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -29,11 +29,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccessTime
 import androidx.compose.material.icons.outlined.Brightness6
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Palette
@@ -65,7 +63,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -75,11 +72,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.brightnesscontrol.brightness.BrightnessAccessibilityService
 import com.example.brightnesscontrol.brightness.BrightnessController
 import com.example.brightnesscontrol.data.PreferencesState
 import com.example.brightnesscontrol.data.ThemeMode
@@ -94,33 +91,38 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
+    private var permissionFlowActive = false
+
+    override fun onResume() {
+        super.onResume()
+        if (!permissionFlowActive) return
+
+        val accessibilityGranted = BrightnessAccessibilityService.isEnabled(this)
+        val writeGranted = BrightnessController.canWriteSettings(this)
+        when {
+            !accessibilityGranted -> Unit
+            !writeGranted -> viewModel.openWriteSettings()
+            else -> {
+                permissionFlowActive = false
+                handleApplyResult(viewModel.applyCorrection(), this, viewModel)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
+            val updateState by viewModel.updateState.collectAsStateWithLifecycle()
             val context = LocalContext.current
             var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-            val imagePicker = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocument()
-            ) { uri ->
-                uri?.let {
-                    runCatching {
-                        contentResolver.takePersistableUriPermission(
-                            it,
-                            Intent.FLAG_GRANT_READ_URI_PERMISSION
-                        )
-                    }
-                    viewModel.setBackgroundUri(it)
-                }
-            }
             val notificationPermission = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission()
             ) { }
 
             BrightnessTheme(state.theme) {
-                AppBackground(state.backgroundUri) {
+                AppBackground {
                     Scaffold(
                         modifier = Modifier.fillMaxSize(),
                         containerColor = Color.Transparent,
@@ -133,17 +135,17 @@ class MainActivity : ComponentActivity() {
                                         } else {
                                             stringResource(R.string.settings_title)
                                         },
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 },
                                 actions = {
                                     if (selectedTab == 0) {
-                                        IconButton(onClick = {
-                                            shareProfile(context, state)
-                                        }) {
+                                        IconButton(onClick = { shareGithub(context) }) {
                                             Icon(
                                                 Icons.Outlined.Share,
-                                                contentDescription = stringResource(R.string.feedback)
+                                                contentDescription = stringResource(R.string.feedback),
+                                                tint = MaterialTheme.colorScheme.onBackground
                                             )
                                         }
                                     } else {
@@ -163,7 +165,7 @@ class MainActivity : ComponentActivity() {
                         bottomBar = {
                             NavigationBar(
                                 modifier = Modifier.navigationBarsPadding(),
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
                             ) {
                                 NavigationBarItem(
                                     selected = selectedTab == 0,
@@ -192,25 +194,16 @@ class MainActivity : ComponentActivity() {
                                     viewModel.resetToSystem()
                                     handleApplyResult(viewModel.applyCorrection(), context, viewModel)
                                 },
-                                onBackgroundChange = { enabled ->
-                                    handleApplyResult(
-                                        viewModel.setBackgroundEnabled(enabled),
-                                        context,
-                                        viewModel
-                                    )
-                                }
+                                onAutostartChange = viewModel::setAutostart
                             )
                         } else {
                             SettingsScreen(
                                 modifier = Modifier.padding(padding),
                                 state = state,
-                                updateState = viewModel.updateState.collectAsStateWithLifecycle().value,
+                                updateState = updateState,
                                 appVersion = viewModel.appVersion(),
                                 onThemeChange = viewModel::setTheme,
-                                onChooseImage = { imagePicker.launch(arrayOf("image/*")) },
-                                onRemoveImage = viewModel::removeBackground,
-                                onAutostartChange = viewModel::setAutostart,
-                                onOverlayPermission = viewModel::openOverlaySettings,
+                                onOverlayPermission = viewModel::openAccessibilitySettings,
                                 onWritePermission = viewModel::openWriteSettings,
                                 onNotificationPermission = {
                                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -242,8 +235,14 @@ class MainActivity : ComponentActivity() {
         when (result) {
             com.example.brightnesscontrol.ui.ApplyResult.Done ->
                 Toast.makeText(context, R.string.applied, Toast.LENGTH_SHORT).show()
-            com.example.brightnesscontrol.ui.ApplyResult.NeedsOverlayPermission -> vm.openOverlaySettings()
-            com.example.brightnesscontrol.ui.ApplyResult.NeedsWriteSettingsPermission -> vm.openWriteSettings()
+            com.example.brightnesscontrol.ui.ApplyResult.NeedsAccessibilityPermission -> {
+                permissionFlowActive = true
+                vm.openAccessibilitySettings()
+            }
+            com.example.brightnesscontrol.ui.ApplyResult.NeedsWriteSettingsPermission -> {
+                permissionFlowActive = true
+                vm.openWriteSettings()
+            }
         }
     }
 }
@@ -255,13 +254,8 @@ private fun BrightnessScreen(
     onCorrectionChange: (Int) -> Unit,
     onApply: () -> Unit,
     onReset: () -> Unit,
-    onBackgroundChange: (Boolean) -> Unit
+    onAutostartChange: (Boolean) -> Unit
 ) {
-    val basePercent = (state.baseBrightness / 255f * 100f).roundToInt()
-    val perceived = BrightnessController.estimatedPerceivedPercent(
-        state.baseBrightness,
-        state.correction
-    )
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -276,7 +270,7 @@ private fun BrightnessScreen(
             Text(
                 stringResource(R.string.brightness_subtitle),
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onBackground
             )
         }
         item {
@@ -293,12 +287,8 @@ private fun BrightnessScreen(
                         Text(
                             stringResource(R.string.correction_label),
                             style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            stringResource(R.string.system_brightness, basePercent),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Text(
@@ -313,29 +303,6 @@ private fun BrightnessScreen(
                     onValueChange = { onCorrectionChange(it.roundToInt()) },
                     valueRange = -100f..100f,
                     steps = 199
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("−100", style = MaterialTheme.typography.labelSmall)
-                    Text("0", style = MaterialTheme.typography.labelSmall)
-                    Text("+100", style = MaterialTheme.typography.labelSmall)
-                }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    when {
-                        state.correction < 0 -> stringResource(
-                            R.string.overlay_amount,
-                            -state.correction
-                        )
-                        state.correction > 0 -> stringResource(R.string.hardware_maximum)
-                        else -> stringResource(R.string.correction_neutral)
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    stringResource(R.string.perceived_brightness, perceived),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -354,43 +321,23 @@ private fun BrightnessScreen(
                     Icon(
                         Icons.Outlined.PowerSettingsNew,
                         contentDescription = null,
-                        tint = if (state.backgroundEnabled) MaterialTheme.colorScheme.primary
+                        tint = if (state.autostart) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            stringResource(R.string.background_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            if (state.backgroundEnabled) stringResource(R.string.service_active)
-                            else stringResource(R.string.service_inactive),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        stringResource(R.string.auto_apply_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
                     Switch(
-                        checked = state.backgroundEnabled,
-                        onCheckedChange = onBackgroundChange
+                        checked = state.autostart,
+                        onCheckedChange = onAutostartChange
                     )
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    stringResource(R.string.background_description),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
-        }
-        item {
-            Text(
-                stringResource(R.string.correction_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
         }
     }
 }
@@ -403,9 +350,6 @@ private fun SettingsScreen(
     updateState: UpdateState,
     appVersion: String,
     onThemeChange: (ThemeMode) -> Unit,
-    onChooseImage: () -> Unit,
-    onRemoveImage: () -> Unit,
-    onAutostartChange: (Boolean) -> Unit,
     onOverlayPermission: () -> Unit,
     onWritePermission: () -> Unit,
     onNotificationPermission: () -> Unit,
@@ -414,7 +358,7 @@ private fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
-    val overlayGranted = BrightnessController.canDrawOverlay(context)
+    val overlayGranted = BrightnessAccessibilityService.isEnabled(context)
     val writeGranted = BrightnessController.canWriteSettings(context)
     val notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
         ContextCompat.checkSelfPermission(
@@ -438,62 +382,15 @@ private fun SettingsScreen(
                 Text(
                     stringResource(R.string.theme),
                     style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold
                 )
             }
             Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ThemeChip(ThemeMode.SYSTEM, state.theme, R.string.theme_system, onThemeChange)
                 ThemeChip(ThemeMode.LIGHT, state.theme, R.string.theme_light, onThemeChange)
                 ThemeChip(ThemeMode.DARK, state.theme, R.string.theme_dark, onThemeChange)
-            }
-        }
-        GlassCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Image, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        stringResource(R.string.background_image),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        stringResource(R.string.background_image_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onChooseImage, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.choose_image), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                if (state.backgroundUri != null) {
-                    TextButton(onClick = onRemoveImage) { Text(stringResource(R.string.remove_image)) }
-                }
-            }
-        }
-
-        SectionTitle(R.string.automation)
-        GlassCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.AccessTime, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        stringResource(R.string.autostart),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        stringResource(R.string.autostart_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(checked = state.autostart, onCheckedChange = onAutostartChange)
             }
         }
 
@@ -531,6 +428,7 @@ private fun SettingsScreen(
                     Text(
                         stringResource(R.string.updates),
                         style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
@@ -596,26 +494,11 @@ private fun SettingsScreen(
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.issues))
             }
-            TextButton(onClick = {
-                uriHandler.openUri("mailto:${BuildConfig.AUTHOR_EMAIL}")
-            }) {
+            TextButton(onClick = { uriHandler.openUri("mailto:${BuildConfig.AUTHOR_EMAIL}") }) {
                 Icon(Icons.Outlined.Share, null)
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.feedback))
             }
-        }
-        GlassCard {
-            Text(
-                stringResource(R.string.limitations),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                stringResource(R.string.limitations_description),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
         Spacer(Modifier.height(18.dp))
     }
@@ -638,9 +521,10 @@ private fun ThemeChip(
     onClick: (ThemeMode) -> Unit
 ) {
     FilterChip(
-        selected = mode == selected,
+        selected = selected == mode,
         onClick = { onClick(mode) },
-        label = { Text(stringResource(label), maxLines = 1) }
+        label = { Text(stringResource(label), maxLines = 1) },
+        modifier = Modifier.fillMaxWidth()
     )
 }
 
@@ -654,16 +538,20 @@ private fun AccessRow(
 ) {
     GlassCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                icon,
+                null,
+                tint = if (granted) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
             Spacer(Modifier.width(8.dp))
             if (granted) {
                 Text(
@@ -675,6 +563,13 @@ private fun AccessRow(
                 OutlinedButton(onClick = onGrant) { Text(stringResource(R.string.grant)) }
             }
         }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            description,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 40.dp)
+        )
     }
 }
 
@@ -693,7 +588,7 @@ private fun SectionTitle(title: Int) {
 private fun GlassCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.91f)
+            containerColor = MaterialTheme.colorScheme.surface
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.13f)),
         shape = RoundedCornerShape(24.dp),
@@ -712,13 +607,10 @@ private fun correctionText(value: Int): String = when {
     else -> "0"
 }
 
-private fun shareProfile(context: Context, state: PreferencesState) {
+private fun shareGithub(context: Context) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(
-            Intent.EXTRA_TEXT,
-            "Brightness+\nCorrection: ${correctionText(state.correction)}\nBackground service: ${state.backgroundEnabled}\nProject: ${BuildConfig.GITHUB_URL}"
-        )
+        putExtra(Intent.EXTRA_TEXT, BuildConfig.GITHUB_URL)
     }
     context.startActivity(Intent.createChooser(intent, context.getString(R.string.app_name)))
 }

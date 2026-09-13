@@ -25,8 +25,22 @@ Android не предоставляет публичного API для физи
 
 ## Публикация обновления
 
+Linux/macOS/Git Bash/WSL:
+
 ```bash
 ./release.sh 1.1.0
 ```
 
-Скрипт увеличит `versionCode`, соберёт release APK, положит его в `apk/BrightnessControl.apk`, обновит `version.json` и проверит подпись. После этого отправьте `apk/BrightnessControl.apk` и `version.json` в репозиторий, затем создайте commit.
+Windows PowerShell или CMD:
+
+```powershell
+.\release.ps1 1.1.0
+```
+
+или:
+
+```bat
+release.bat 1.1.0
+```
+
+Скрипт увеличит `versionCode`, соберёт release APK, положит его в `apk/BrightnessControl.apk`, обновит `version.json` и проверит подпись. Если сборка завершится ошибкой, `app/build.gradle.kts` и `version.json` автоматически восстановятся. Скрипт не меняет системную Java: он автоматически ищет совместимый JDK 17 в `%USERPROFILE%\.jdks` или `~/.jdks` и использует его только для этой сборки. После успешной сборки отправьте `apk/BrightnessControl.apk` и `version.json` в репозиторий, затем создайте commit.

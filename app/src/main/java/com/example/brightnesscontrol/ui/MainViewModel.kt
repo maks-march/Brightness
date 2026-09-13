@@ -7,23 +7,25 @@ import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.brightnesscontrol.BuildConfig
+import com.example.brightnesscontrol.brightness.BrightnessAccessibilityService
 import com.example.brightnesscontrol.brightness.BrightnessController
 import com.example.brightnesscontrol.brightness.BrightnessService
 import com.example.brightnesscontrol.data.AppPreferences
 import com.example.brightnesscontrol.data.PreferencesState
+import com.example.brightnesscontrol.data.ThemeMode
 import com.example.brightnesscontrol.update.InstallResult
 import com.example.brightnesscontrol.update.UpdateManager
 import com.example.brightnesscontrol.update.UpdateState
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
 
 sealed interface ApplyResult {
     data object Done : ApplyResult
-    data object NeedsOverlayPermission : ApplyResult
+    data object NeedsAccessibilityPermission : ApplyResult
     data object NeedsWriteSettingsPermission : ApplyResult
 }
 
@@ -45,18 +47,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun resetToSystem() {
         // The base is captured before an extended correction is applied, so reset never
         // mistakes an already boosted value for the user's ordinary system level.
-        val base = preferences.current().baseBrightness
+        val base = preferences.current().basePercent
         BrightnessService.stop(appContext, restore = true)
-        preferences.rebaseBrightness(base)
+        preferences.rebasePercent(base)
         BrightnessController.writeSystemBrightness(appContext, base)
     }
 
     fun applyCorrection(): ApplyResult {
         val current = preferences.current()
-        if (current.correction < 0 && !BrightnessController.canDrawOverlay(appContext)) {
-            return ApplyResult.NeedsOverlayPermission
+        if (current.correction < 0 && !BrightnessAccessibilityService.isEnabled(appContext)) {
+            return ApplyResult.NeedsAccessibilityPermission
         }
-        if (current.correction > 0 && !BrightnessController.canWriteSettings(appContext)) {
+        if (current.correction != 0 && !BrightnessController.canWriteSettings(appContext)) {
             return ApplyResult.NeedsWriteSettingsPermission
         }
 
@@ -64,45 +66,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             current.correction < 0 -> BrightnessService.apply(
                 appContext,
                 current.correction,
-                current.baseBrightness
+                current.basePercent
             )
             current.correction > 0 -> {
-                if (current.backgroundEnabled) {
-                    BrightnessService.apply(appContext, current.correction, current.baseBrightness)
-                } else {
-                    BrightnessController.writeSystemBrightness(
-                        appContext,
-                        BrightnessController.systemValueForCorrection(
-                            current.baseBrightness,
-                            current.correction
-                        )
+                BrightnessController.writeSystemBrightness(
+                    appContext,
+                    BrightnessController.systemPercentForCorrection(
+                        current.basePercent,
+                        current.correction
                     )
-                    BrightnessService.stop(appContext, restore = false)
-                }
+                )
+                // A previous negative correction may still have a running overlay service.
+                BrightnessService.stop(appContext, restore = false)
             }
             else -> {
                 BrightnessService.stop(appContext, restore = true)
-                BrightnessController.writeSystemBrightness(appContext, current.baseBrightness)
+                BrightnessController.writeSystemBrightness(appContext, current.basePercent)
             }
         }
         return ApplyResult.Done
     }
 
-    fun setBackgroundEnabled(enabled: Boolean): ApplyResult {
-        if (enabled && preferences.current().correction < 0 &&
-            !BrightnessController.canDrawOverlay(appContext)
-        ) return ApplyResult.NeedsOverlayPermission
-
-        preferences.setBackgroundEnabled(enabled)
-        if (enabled) return applyCorrection()
-        BrightnessService.stop(appContext, restore = false)
-        return ApplyResult.Done
-    }
-
     fun setAutostart(enabled: Boolean) = preferences.setAutostart(enabled)
-    fun setTheme(theme: com.example.brightnesscontrol.data.ThemeMode) = preferences.setTheme(theme)
-    fun setBackgroundUri(uri: Uri?) = preferences.setBackgroundUri(uri?.toString())
-    fun removeBackground() = preferences.setBackgroundUri(null)
+    fun setTheme(theme: ThemeMode) = preferences.setTheme(theme)
 
     fun checkForUpdates() {
         _updateState.value = UpdateState.Checking
@@ -123,12 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openOverlaySettings() {
-        val intent = Intent(
-            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-            Uri.parse("package:${appContext.packageName}")
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        appContext.startActivity(intent)
+    fun openAccessibilitySettings() {
+        appContext.startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     fun openWriteSettings() {

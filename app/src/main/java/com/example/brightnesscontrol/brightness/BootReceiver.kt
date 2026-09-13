@@ -3,8 +3,8 @@ package com.example.brightnesscontrol.brightness
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import com.example.brightnesscontrol.data.AppPreferences
 import androidx.core.content.ContextCompat
+import com.example.brightnesscontrol.data.AppPreferences
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -13,14 +13,24 @@ class BootReceiver : BroadcastReceiver() {
         ) return
 
         val preferences = AppPreferences(context).current()
-        if (!preferences.autostart || !preferences.backgroundEnabled || preferences.correction == 0) return
-        if (preferences.correction < 0 && !BrightnessController.canDrawOverlay(context)) return
+        if (!preferences.autostart || preferences.correction == 0) return
 
-        val serviceIntent = Intent(context, BrightnessService::class.java).apply {
-            action = "com.example.brightnesscontrol.APPLY"
-            putExtra("correction", preferences.correction)
-            putExtra("base_brightness", preferences.baseBrightness)
+        if (preferences.correction < 0) {
+            if (!BrightnessAccessibilityService.isEnabled(context)) return
+            val serviceIntent = Intent(context, BrightnessService::class.java).apply {
+                action = "com.example.brightnesscontrol.APPLY"
+                putExtra("correction", preferences.correction)
+                putExtra("base_brightness", preferences.basePercent)
+            }
+            ContextCompat.startForegroundService(context, serviceIntent)
+        } else if (BrightnessController.canWriteSettings(context)) {
+            BrightnessController.writeSystemBrightness(
+                context,
+                BrightnessController.systemPercentForCorrection(
+                    preferences.basePercent,
+                    preferences.correction
+                )
+            )
         }
-        ContextCompat.startForegroundService(context, serviceIntent)
     }
 }

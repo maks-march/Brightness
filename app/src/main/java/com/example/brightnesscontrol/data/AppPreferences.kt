@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.roundToInt
 
 /** All app settings are local. Keeping them in SharedPreferences also lets BootReceiver read them synchronously. */
 class AppPreferences(context: Context) {
@@ -24,18 +25,24 @@ class AppPreferences(context: Context) {
 
     fun current(): PreferencesState = _state.value
 
-    fun ensureBaseBrightness(value: Int) {
-        if (!preferences.contains(KEY_BASE_BRIGHTNESS)) {
-            preferences.edit().putInt(KEY_BASE_BRIGHTNESS, value.coerceIn(0, 255)).apply()
+    fun ensureBaseBrightness(percent: Int) {
+        if (preferences.getBoolean(KEY_BASE_IS_PERCENT, false)) return
+
+        val migratedPercent = if (preferences.contains(KEY_BASE_BRIGHTNESS)) {
+            // Older builds stored Android's 0..255 value. Migrate it once to 0..100.
+            val oldRaw = preferences.getInt(KEY_BASE_BRIGHTNESS, 128)
+            (oldRaw.coerceIn(0, 255) / 255f * 100f).roundToInt()
+        } else {
+            percent
         }
+        preferences.edit()
+            .putInt(KEY_BASE_BRIGHTNESS, migratedPercent.coerceIn(0, 100))
+            .putBoolean(KEY_BASE_IS_PERCENT, true)
+            .apply()
     }
 
     fun setCorrection(value: Int) {
         preferences.edit().putInt(KEY_CORRECTION, value.coerceIn(-100, 100)).apply()
-    }
-
-    fun setBackgroundEnabled(value: Boolean) {
-        preferences.edit().putBoolean(KEY_BACKGROUND_ENABLED, value).apply()
     }
 
     fun setAutostart(value: Boolean) {
@@ -46,15 +53,10 @@ class AppPreferences(context: Context) {
         preferences.edit().putString(KEY_THEME, value.name).apply()
     }
 
-    fun setBackgroundUri(value: String?) {
-        preferences.edit().apply {
-            if (value == null) remove(KEY_BACKGROUND_URI) else putString(KEY_BACKGROUND_URI, value)
-        }.apply()
-    }
-
-    fun rebaseBrightness(value: Int) {
+    fun rebasePercent(percent: Int) {
         preferences.edit()
-            .putInt(KEY_BASE_BRIGHTNESS, value.coerceIn(0, 255))
+            .putInt(KEY_BASE_BRIGHTNESS, percent.coerceIn(0, 100))
+            .putBoolean(KEY_BASE_IS_PERCENT, true)
             .putInt(KEY_CORRECTION, 0)
             .apply()
     }
@@ -65,11 +67,9 @@ class AppPreferences(context: Context) {
             ?: ThemeMode.SYSTEM
         return PreferencesState(
             correction = preferences.getInt(KEY_CORRECTION, 0).coerceIn(-100, 100),
-            baseBrightness = preferences.getInt(KEY_BASE_BRIGHTNESS, 128).coerceIn(0, 255),
-            backgroundEnabled = preferences.getBoolean(KEY_BACKGROUND_ENABLED, false),
+            basePercent = preferences.getInt(KEY_BASE_BRIGHTNESS, 50).coerceIn(0, 100),
             autostart = preferences.getBoolean(KEY_AUTOSTART, false),
-            theme = theme,
-            backgroundUri = preferences.getString(KEY_BACKGROUND_URI, null)
+            theme = theme
         )
     }
 
@@ -77,10 +77,9 @@ class AppPreferences(context: Context) {
         private const val FILE_NAME = "brightness_preferences"
         private const val KEY_CORRECTION = "correction"
         private const val KEY_BASE_BRIGHTNESS = "base_brightness"
-        private const val KEY_BACKGROUND_ENABLED = "background_enabled"
+        private const val KEY_BASE_IS_PERCENT = "base_brightness_is_percent"
         private const val KEY_AUTOSTART = "autostart"
         private const val KEY_THEME = "theme"
-        private const val KEY_BACKGROUND_URI = "background_uri"
     }
 }
 
@@ -88,9 +87,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 data class PreferencesState(
     val correction: Int = 0,
-    val baseBrightness: Int = 128,
-    val backgroundEnabled: Boolean = false,
+    val basePercent: Int = 50,
     val autostart: Boolean = false,
-    val theme: ThemeMode = ThemeMode.SYSTEM,
-    val backgroundUri: String? = null
+    val theme: ThemeMode = ThemeMode.SYSTEM
 )
