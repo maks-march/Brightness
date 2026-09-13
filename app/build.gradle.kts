@@ -13,15 +13,15 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 2
-        versionName = "1.0.1"
+        versionName = "1.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
-        buildConfigField("String", "VERSION_URL", "\"https://raw.githubusercontent.com/your-name/brightness-control/main/version.json\"")
-        buildConfigField("String", "APK_URL", "\"https://github.com/your-name/brightness-control/raw/main/apk/BrightnessControl.apk\"")
-        buildConfigField("String", "GITHUB_URL", "\"https://github.com/your-name/brightness-control\"")
-        buildConfigField("String", "ISSUES_URL", "\"https://github.com/your-name/brightness-control/issues\"")
-        buildConfigField("String", "AUTHOR_EMAIL", "\"author@example.com\"")
+        buildConfigField("String", "VERSION_URL", "\"https://raw.githubusercontent.com/maks-march/Brightness/master/version.json\"")
+        buildConfigField("String", "APK_URL", "\"https://raw.githubusercontent.com/maks-march/Brightness/master/apk/BrightnessControl.apk\"")
+        buildConfigField("String", "GITHUB_URL", "\"https://github.com/maks-march/Brightness\"")
+        buildConfigField("String", "ISSUES_URL", "\"https://github.com/maks-march/Brightness/issues\"")
+        buildConfigField("String", "AUTHOR_EMAIL", "\"1maks_2055@mail.ru\"")
     }
 
     signingConfigs {
