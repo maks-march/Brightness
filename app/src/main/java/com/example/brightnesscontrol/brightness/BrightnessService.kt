@@ -34,12 +34,18 @@ class BrightnessService : Service() {
                 val preferences = AppPreferences(this).current()
                 val brightnessPercent = intent?.getIntExtra(
                     EXTRA_BRIGHTNESS,
-                    preferences.brightnessLevel.coerceAtLeast(0)
-                ) ?: preferences.brightnessLevel.coerceAtLeast(0)
+                    BrightnessPolicy.systemPercentForLevel(preferences.brightnessLevel)
+                ) ?: BrightnessPolicy.systemPercentForLevel(preferences.brightnessLevel)
                 val dimPercent = intent?.getIntExtra(
                     EXTRA_DIM,
-                    effectiveDimPercent(preferences.brightnessLevel, preferences.dimPercent)
-                ) ?: effectiveDimPercent(preferences.brightnessLevel, preferences.dimPercent)
+                    BrightnessPolicy.effectiveDimPercent(
+                        preferences.brightnessLevel,
+                        preferences.dimPercent
+                    )
+                ) ?: BrightnessPolicy.effectiveDimPercent(
+                    preferences.brightnessLevel,
+                    preferences.dimPercent
+                )
                 applySettings(brightnessPercent, dimPercent)
                 updateForegroundNotification(dimPercent)
             }
@@ -53,19 +59,19 @@ class BrightnessService : Service() {
         val dimPercent = (preferencesState.dimPercent + delta).coerceIn(0, 100)
         preferences.setDimPercent(dimPercent)
         preferencesState = preferences.current()
-        val effectiveDim = effectiveDimPercent(preferencesState.brightnessLevel, dimPercent)
-        applySettings(preferencesState.brightnessLevel.coerceAtLeast(0), effectiveDim)
+        val effectiveDim = BrightnessPolicy.effectiveDimPercent(
+            preferencesState.brightnessLevel,
+            dimPercent
+        )
+        applySettings(
+            BrightnessPolicy.systemPercentForLevel(preferencesState.brightnessLevel),
+            effectiveDim
+        )
         if (dimPercent == 0 && preferencesState.brightnessLevel >= 0) {
             stopSelf()
         } else {
             updateForegroundNotification(effectiveDim)
         }
-    }
-
-    private fun effectiveDimPercent(brightnessLevel: Int, additionalDimPercent: Int): Int = when {
-        brightnessLevel < 0 -> maxOf(-brightnessLevel, additionalDimPercent)
-        brightnessLevel == 0 -> 0
-        else -> additionalDimPercent
     }
 
     private fun applySettings(brightnessPercent: Int, dimPercent: Int) {

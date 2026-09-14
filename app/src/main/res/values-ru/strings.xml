@@ -4,7 +4,7 @@
     <string name="nav_settings">Настройки</string>
     <string name="brightness_title">Расширенная яркость</string>
     <string name="brightness_subtitle">Системная яркость 0–100%, а ниже нуля — затемнение</string>
-    <string name="brightness_level">Яркость / затемнение</string>
+    <string name="brightness_level">Яркость</string>
     <string name="overlay_amount">Затемнение слоем: %1$d%%</string>
     <string name="hardware_maximum">Android не может превысить физический максимум дисплея.</string>
     <string name="apply">Применить</string>
@@ -28,7 +28,7 @@
     <string name="autostart">Запускать после перезагрузки</string>
     <string name="autostart_description">Повторно применяет сохранённую яркость и затемнение после загрузки Android. На некоторых устройствах автозапуск нужно разрешить в настройках батареи.</string>
     <string name="access">Доступ</string>
-    <string name="overlay_permission">Overlay через специальные возможности</string>
+    <string name="overlay_permission">Затемняющий слой поверх приложений</string>
     <string name="overlay_permission_description">Нужно, чтобы держать затемняющий слой поверх приложений и, если это разрешено Android, поверх системных элементов.</string>
     <string name="accessibility_service_description">Brightness+ использует специальные возможности только для отображения прозрачного затемняющего слоя. Приложение не читает содержимое экрана и не выполняет действия.</string>
     <string name="accessibility_service_summary">Затемняющий слой</string>

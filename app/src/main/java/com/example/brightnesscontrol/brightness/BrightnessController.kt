@@ -14,13 +14,13 @@ object BrightnessController {
         val raw = runCatching {
             Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
         }.getOrDefault(128)
-        return rawToPercent(raw)
+        return percentForRaw(raw)
     }
 
     /** Accepts only a 0..100 percentage and converts it to Android's 0..255 storage range. */
     fun writeSystemBrightness(context: Context, percent: Int): Boolean {
         if (!canWriteSettings(context)) return false
-        val raw = (percent.coerceIn(0, 100) / 100f * 255f).roundToInt()
+        val raw = rawForPercent(percent)
         return runCatching {
             Settings.System.putInt(
                 context.contentResolver,
@@ -30,11 +30,14 @@ object BrightnessController {
         }.getOrDefault(false)
     }
 
+    fun rawForPercent(percent: Int): Int =
+        (percent.coerceIn(0, 100) / 100f * 255f).roundToInt().coerceIn(0, 255)
+
+    fun percentForRaw(raw: Int): Int =
+        (raw.coerceIn(0, 255) / 255f * 100f).roundToInt().coerceIn(0, 100)
+
     /** A black overlay is intentionally capped below opaque black so the UI remains recoverable. */
     fun overlayAlphaForDimPercent(dimPercent: Int): Float {
         return dimPercent.coerceIn(0, 100) / 100f * 0.92f
     }
-
-    private fun rawToPercent(raw: Int): Int =
-        (raw.coerceIn(0, 255) / 255f * 100f).roundToInt().coerceIn(0, 100)
 }

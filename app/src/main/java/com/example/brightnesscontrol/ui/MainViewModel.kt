@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.brightnesscontrol.BuildConfig
 import com.example.brightnesscontrol.brightness.BrightnessAccessibilityService
 import com.example.brightnesscontrol.brightness.BrightnessController
+import com.example.brightnesscontrol.brightness.BrightnessPolicy
 import com.example.brightnesscontrol.brightness.BrightnessService
 import com.example.brightnesscontrol.data.AppPreferences
 import com.example.brightnesscontrol.data.PreferencesState
@@ -22,8 +23,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlin.math.abs
-import kotlin.math.max
 
 sealed interface ApplyResult {
     data object Done : ApplyResult
@@ -56,7 +55,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun applyBrightness(): ApplyResult {
         val current = preferences.current()
-        val dimPercent = effectiveDimPercent(current)
+        val dimPercent = BrightnessPolicy.effectiveDimPercent(
+            current.brightnessLevel,
+            current.dimPercent
+        )
         if (dimPercent > 0 && !BrightnessAccessibilityService.isEnabled(appContext)) {
             return ApplyResult.NeedsAccessibilityPermission
         }
@@ -64,16 +66,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return ApplyResult.NeedsWriteSettingsPermission
         }
 
-        val systemPercent = current.brightnessLevel.coerceAtLeast(0)
+        val systemPercent = BrightnessPolicy.systemPercentForLevel(current.brightnessLevel)
         BrightnessController.writeSystemBrightness(appContext, systemPercent)
         BrightnessService.apply(appContext, systemPercent, dimPercent)
         return ApplyResult.Done
-    }
-
-    private fun effectiveDimPercent(state: PreferencesState): Int = when {
-        state.brightnessLevel < 0 -> max(abs(state.brightnessLevel), state.dimPercent)
-        state.brightnessLevel == 0 -> 0
-        else -> state.dimPercent
     }
 
     fun setAutostart(enabled: Boolean) = preferences.setAutostart(enabled)
